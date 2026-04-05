@@ -194,7 +194,11 @@ def main() -> None:
             else:
                 console.print("[yellow]No configuration found.[/yellow]")
             return
-    asyncio.run(run_bot())
+        if cmd in ("cli", "headless", "terminal"):
+            asyncio.run(run_bot())
+            return
+    from opencode_telegram_bot.gui import main as gui_main
+    gui_main()
 
 
 if __name__ == "__main__":

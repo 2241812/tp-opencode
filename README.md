@@ -1,29 +1,25 @@
-# OpenCode Telegram Bot
+# tp-opencode
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![OpenCode](https://img.shields.io/badge/OpenCode-Compatible-brightgreen)](https://opencode.ai)
 
-**OpenCode mobile client via Telegram** — run and monitor AI coding tasks from your phone while everything runs locally on your machine. A lightweight [OpenClaw](https://github.com/openclaw/openclaw) alternative built for [OpenCode](https://github.com/anomalyco/opencode).
-
-[![OpenCode Telegram Bot](assets/banner.png)](https://opencode.ai)
+**Desktop GUI app for running OpenCode with a Telegram bot** — one click to start everything. A lightweight [OpenClaw](https://github.com/openclaw/openclaw) alternative built for [OpenCode](https://github.com/anomalyco/opencode).
 
 ## Features
 
-- **Remote coding** — send prompts to OpenCode from anywhere, receive complete results with code sent as files
-- **Session management** — create, switch, rename, compact, and abort sessions from Telegram
-- **Live status** — pinned message with current project, model, context usage, updated in real time
-- **Model switching** — pick models directly in the chat via inline keyboard
-- **Agent modes** — switch between Plan and Build modes on the fly with `/mode`
-- **Interactive Q&A** — answer agent questions and approve permissions via inline buttons
-- **Voice prompts** — send voice messages, transcribe them via Whisper-compatible API
-- **File attachments** — send images, documents, and text-based files to OpenCode
+- **Desktop GUI** — one-window app with setup wizard, server control, bot control, live logs, and model picker
+- **One-command launch** — `opencode-telegram` opens the GUI, auto-starts the server and bot
+- **Remote coding** — send prompts to OpenCode from Telegram, receive results on your phone
+- **Session management** — create, switch, rename, and abort sessions from Telegram or the GUI
+- **Model picker** — browse and switch models from the GUI dashboard
+- **Agent modes** — switch between Plan and Build modes with `/mode`
+- **Voice prompts** — send voice messages, transcribe via Whisper-compatible API
 - **Scheduled tasks** — schedule prompts to run later or on a recurring interval
-- **Server control** — start/stop the OpenCode server remotely via `/opencode_start` and `/opencode_stop`
-- **Web GUI** — built-in monitoring dashboard at `http://localhost:8765`
 - **Security** — strict user ID whitelist; no external attack surface
 - **Localization** — English, Deutsch, Español, Français, Русский, 简体中文
 - **Docker support** — one-command deployment with docker-compose
+- **CLI mode** — run headless with `opencode-telegram cli`
 
 ## Architecture
 
@@ -65,43 +61,44 @@ Get your **Telegram User ID** by messaging [@userinfobot](https://t.me/userinfob
 ### 2. Install OpenCode
 
 ```bash
-# Install OpenCode CLI
 curl -fsSL https://opencode.ai/install | bash
-
-# Start the server in your project directory
-cd /path/to/project
-opencode serve
 ```
 
-### 3. Install & Run the Bot
-
-#### Option A: pip install (recommended)
+### 3. Install & Launch the App
 
 ```bash
 pip install tp-opencode
-opencode-telegram config    # Interactive setup wizard
-opencode-telegram start     # Launch the bot
+opencode-telegram
 ```
 
-#### Option B: From source
+That's it. The GUI opens, you fill in your bot token and user ID on first launch, then click **Start Server** and **Start Bot**. Everything runs from one window.
+
+#### From source
 
 ```bash
 git clone https://github.com/2241812/tp-opencode.git
 cd tp-opencode
-pip install -r requirements.txt
-opencode-telegram config    # Interactive setup wizard
-opencode-telegram start     # Launch the bot
+pip install -e .
+opencode-telegram
 ```
 
-#### Option C: Docker
+#### CLI mode (headless, no GUI)
 
 ```bash
-git clone https://github.com/2241812/tp-opencode.git
-cd tp-opencode
-cp .env.example .env
-# Edit .env with your bot token and user ID
-docker compose up -d
+opencode-telegram cli
 ```
+
+## Desktop GUI
+
+The app opens a single window with everything you need:
+
+- **Setup Wizard** — on first launch, enter your bot token, user ID, and OpenCode URL
+- **Dashboard** — server status, bot status, model info at a glance
+- **Start/Stop buttons** — one click to start the OpenCode server and the Telegram bot
+- **Live Logs** — real-time log output from the bot
+- **Model Picker** — browse available models from your OpenCode config and select one
+- **Session List** — see recent sessions
+- **Reconfigure** — go back to the setup wizard anytime
 
 ## Bot Commands
 
@@ -251,7 +248,8 @@ tp-opencode/
 │   ├── web/
 │   │   └── gui.py             # Flask monitoring dashboard
 │   ├── locales/               # Translation files (en, ru, zh, de, es, fr)
-│   └── main.py                # Entry point and CLI
+│   ├── gui.py                 # Desktop GUI app (customtkinter)
+│   └── main.py                # Entry point (defaults to GUI, cli for headless)
 ├── tests/
 ├── Dockerfile
 ├── docker-compose.yml
