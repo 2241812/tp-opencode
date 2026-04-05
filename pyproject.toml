@@ -46,10 +46,14 @@ dev = [
     "ruff>=0.9",
     "mypy>=1.14",
 ]
+build = [
+    "pyinstaller>=6.0",
+]
 
 [project.scripts]
 opencode-tg = "opencode_telegram_bot.main:main"
 opencode-telegram = "opencode_telegram_bot.main:main"
+opencode-tg-app = "opencode_telegram_bot.launcher:launch"
 
 [project.urls]
 Homepage = "https://github.com/2241812/tp-opencode"
