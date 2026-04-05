@@ -1,0 +1,38 @@
+services:
+  opencode-telegram-bot:
+    build: .
+    container_name: opencode-telegram-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${WEB_GUI_PORT:-8765}:8765"
+    volumes:
+      - bot-data:/root/.config/opencode-telegram-bot
+    networks:
+      - opencode-net
+    depends_on:
+      - opencode-server
+
+  opencode-server:
+    image: ghcr.io/anomalyco/opencode:latest
+    container_name: opencode-server
+    restart: unless-stopped
+    ports:
+      - "4096:4096"
+    volumes:
+      - ./workspace:/workspace
+      - opencode-config:/root/.config/opencode
+    working_dir: /workspace
+    environment:
+      - OPENCODE_API_KEY=${OPENCODE_API_KEY:-}
+    networks:
+      - opencode-net
+
+volumes:
+  bot-data:
+  opencode-config:
+
+networks:
+  opencode-net:
+    driver: bridge

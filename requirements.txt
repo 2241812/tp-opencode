@@ -1,0 +1,12 @@
+python-telegram-bot==21.3
+aiohttp==3.11.12
+pydantic==2.10.6
+pydantic-settings==2.7.1
+python-dotenv==1.0.1
+sseclient-py==1.8.0
+apscheduler==3.10.4
+flask==3.1.0
+openai==1.61.1
+httpx==0.28.1
+prompt-toolkit==3.0.50
+rich==13.9.4
