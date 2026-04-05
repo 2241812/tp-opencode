@@ -5,8 +5,8 @@ Thank you for your interest in contributing! This project is inspired by the wor
 ## Development Setup
 
 ```bash
-git clone https://github.com/2241812/opencode-telegram-bot.git
-cd opencode-telegram-bot
+git clone https://github.com/2241812/tp-opencode.git
+cd tp-opencode
 pip install -e ".[dev]"
 ```
 

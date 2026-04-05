@@ -78,7 +78,7 @@ opencode serve
 #### Option A: pip install (recommended)
 
 ```bash
-pip install opencode-telegram-bot
+pip install tp-opencode
 opencode-telegram config    # Interactive setup wizard
 opencode-telegram start     # Launch the bot
 ```
@@ -86,8 +86,8 @@ opencode-telegram start     # Launch the bot
 #### Option B: From source
 
 ```bash
-git clone https://github.com/2241812/opencode-telegram-bot.git
-cd opencode-telegram-bot
+git clone https://github.com/2241812/tp-opencode.git
+cd tp-opencode
 pip install -r requirements.txt
 opencode-telegram config    # Interactive setup wizard
 opencode-telegram start     # Launch the bot
@@ -96,8 +96,8 @@ opencode-telegram start     # Launch the bot
 #### Option C: Docker
 
 ```bash
-git clone https://github.com/2241812/opencode-telegram-bot.git
-cd opencode-telegram-bot
+git clone https://github.com/2241812/tp-opencode.git
+cd tp-opencode
 cp .env.example .env
 # Edit .env with your bot token and user ID
 docker compose up -d
@@ -214,8 +214,8 @@ Since the bot runs locally on your machine and connects to your local OpenCode s
 ## Development
 
 ```bash
-git clone https://github.com/2241812/opencode-telegram-bot.git
-cd opencode-telegram-bot
+git clone https://github.com/2241812/tp-opencode.git
+cd tp-opencode
 pip install -e ".[dev]"
 
 # Run with auto-reload
@@ -234,7 +234,7 @@ pytest tests/ -v
 ## Project Structure
 
 ```
-opencode-telegram-bot/
+tp-opencode/
 ├── src/opencode_telegram_bot/
 │   ├── api/
 │   │   ├── client.py          # OpenCode HTTP API client

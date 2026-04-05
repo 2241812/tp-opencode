@@ -10,7 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CONFIG_DIR = Path.home() / ".config" / "opencode-telegram-bot"
+DEFAULT_CONFIG_DIR = Path.home() / ".config" / "tp-opencode"
 
 
 class Settings(BaseSettings):

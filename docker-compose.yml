@@ -1,14 +1,14 @@
 services:
-  opencode-telegram-bot:
+  tp-opencode:
     build: .
-    container_name: opencode-telegram-bot
+    container_name: tp-opencode
     restart: unless-stopped
     env_file:
       - .env
     ports:
       - "${WEB_GUI_PORT:-8765}:8765"
     volumes:
-      - bot-data:/root/.config/opencode-telegram-bot
+      - bot-data:/root/.config/tp-opencode
     networks:
       - opencode-net
     depends_on:

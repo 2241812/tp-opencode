@@ -13,7 +13,7 @@ class SessionManager:
     """Manage session state and persistence."""
 
     def __init__(self, data_dir: Path | None = None) -> None:
-        self.data_dir = data_dir or Path.home() / ".config" / "opencode-telegram-bot"
+        self.data_dir = data_dir or Path.home() / ".config" / "tp-opencode"
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self._file = self.data_dir / "sessions.json"
         self._sessions: dict[str, dict[str, Any]] = self._load()
