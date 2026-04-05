@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-import logging
 import shutil
 import sys
 import time
+import traceback
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 from opencode_telegram_bot.api import OpenCodeServer
 from opencode_telegram_bot.core.config import DEFAULT_CONFIG_DIR
-
-logger = logging.getLogger("tp-opencode-launcher")
+from opencode_telegram_bot.utils.logger import setup_logging, log_exception
 
 
 def _find_opencode() -> str:
@@ -31,31 +30,57 @@ def _find_opencode() -> str:
 
 
 def launch() -> None:
+    logger = setup_logging()
+    logger.info("=" * 60)
+    logger.info("tp-opencode starting")
+    logger.info("Python: %s", sys.version)
+    logger.info("Platform: %s", sys.platform)
+    logger.info("Config dir: %s", DEFAULT_CONFIG_DIR)
+
     env_file = DEFAULT_CONFIG_DIR / ".env"
     if env_file.exists():
         load_dotenv(env_file, override=True)
+        logger.info("Loaded config from %s", env_file)
+    else:
+        logger.warning("No .env file found at %s", env_file)
 
-    from opencode_telegram_bot.core.config import Settings
+    try:
+        from opencode_telegram_bot.core.config import Settings
 
-    settings = Settings()
-    opencode_cmd = settings.opencode_command or _find_opencode()
+        settings = Settings()
+        logger.info("Settings loaded. API URL: %s", settings.opencode_api_url)
+        logger.info("Auto-start: %s", settings.opencode_auto_start)
 
-    server = OpenCodeServer(
-        command=opencode_cmd,
-        work_dir=settings.opencode_work_dir or None,
-    )
+        opencode_cmd = settings.opencode_command or _find_opencode()
+        logger.info("OpenCode command: %s", opencode_cmd)
 
-    if settings.opencode_auto_start and not server.is_running:
-        try:
-            logger.info("Starting OpenCode server...")
-            server.start()
-            time.sleep(3)
-            logger.info("OpenCode server started.")
-        except FileNotFoundError:
-            logger.warning("opencode command not found. GUI will still open.")
+        server = OpenCodeServer(
+            command=opencode_cmd,
+            work_dir=settings.opencode_work_dir or None,
+        )
 
-    from opencode_telegram_bot.gui import main as gui_main
-    gui_main()
+        if settings.opencode_auto_start and not server.is_running:
+            try:
+                logger.info("Starting OpenCode server...")
+                server.start()
+                time.sleep(3)
+                logger.info("OpenCode server started (PID: %s)", server.get_pid())
+            except FileNotFoundError:
+                logger.warning("opencode command not found at '%s'. GUI will still open.", opencode_cmd)
+            except Exception as e:
+                log_exception(e, "Starting OpenCode server")
+                logger.warning("Failed to start OpenCode server. GUI will still open.")
+
+        logger.info("Launching GUI...")
+        from opencode_telegram_bot.gui import main as gui_main
+        gui_main()
+
+    except Exception as e:
+        log_exception(e, "Launcher")
+        print(f"\nFatal error: {e}")
+        traceback.print_exc()
+        input("Press Enter to exit...")
+        raise
 
 
 if __name__ == "__main__":

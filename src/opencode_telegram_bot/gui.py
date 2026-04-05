@@ -7,6 +7,8 @@ import os
 import shutil
 import sys
 import threading
+import traceback
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -17,6 +19,7 @@ from opencode_telegram_bot.core import BotSettings, SessionManager
 from opencode_telegram_bot.core.config import Settings, DEFAULT_CONFIG_DIR
 from opencode_telegram_bot.utils.scheduler import TaskScheduler
 from opencode_telegram_bot.utils.i18n import get_available_locales
+from opencode_telegram_bot.utils.logger import setup_logging, log_exception, get_log_contents, LOG_DIR, LOG_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -348,7 +351,10 @@ class DashboardFrame(ctk.CTkFrame):
         logging.getLogger("opencode_telegram_bot").addHandler(log_handler)
         logging.getLogger("telegram").addHandler(log_handler)
 
-        _CTkButtonSecondary(right_panel, text="Clear Logs", command=self._clear_logs, height=36).grid(row=2, column=0, pady=(8, 0), sticky="e")
+        btn_logs_frame = ctk.CTkFrame(right_panel, fg_color=COLORS["bg"])
+        btn_logs_frame.grid(row=2, column=0, pady=(8, 0), sticky="e")
+        _CTkButtonSecondary(btn_logs_frame, text="Clear Logs", command=self._clear_logs, height=36, width=120).pack(side="left", padx=(0, 8))
+        _CTkButtonSecondary(btn_logs_frame, text="Export Logs", command=self._export_logs, height=36, width=120).pack(side="left")
 
     def _log_callback(self, msg: str) -> None:
         self.after(0, lambda: self._append_log(msg))
@@ -359,6 +365,18 @@ class DashboardFrame(ctk.CTkFrame):
 
     def _clear_logs(self) -> None:
         self.log_text.delete("1.0", "end")
+
+    def _export_logs(self) -> None:
+        try:
+            log_content = get_log_contents()
+            gui_log = self.log_text.get("1.0", "end")
+            combined = f"=== FILE LOG ({LOG_FILE}) ===\n{log_content}\n\n=== GUI LOG ===\n{gui_log}"
+            export_file = LOG_DIR / f"tp-opencode-logs-{datetime.now().strftime('%Y%m%d-%H%M%S')}.txt"
+            export_file.write_text(combined, encoding="utf-8")
+            self._append_log(f"Logs exported to: {export_file}")
+            self._append_log("Share this file for debugging support.")
+        except Exception as exc:
+            self._append_log(f"Failed to export logs: {exc}")
 
     def _start_status_poll(self) -> None:
         self._poll_status()
@@ -486,8 +504,9 @@ class DashboardFrame(ctk.CTkFrame):
                 self.after(0, lambda: self._append_log("Bot polling started."))
                 while not self._stop_event.is_set():
                     await asyncio.sleep(0.5)
-            except Exception as e:
-                self.after(0, lambda: self._append_log(f"Bot error: {e}"))
+            except Exception as exc:
+                err_msg = f"Bot error: {exc}"
+                self.after(0, lambda m=err_msg: self._append_log(m))
                 self.after(0, lambda: self.bot_label.configure(text="Bot: Error", text_color=COLORS["error"]))
             finally:
                 try:
@@ -511,8 +530,9 @@ class DashboardFrame(ctk.CTkFrame):
         asyncio.set_event_loop(loop)
         try:
             loop.run_until_complete(run())
-        except Exception as e:
-            self.after(0, lambda: self._append_log(f"Bot loop error: {e}"))
+        except Exception as exc:
+            err_msg = f"Bot loop error: {exc}"
+            self.after(0, lambda m=err_msg: self._append_log(m))
             self.after(0, lambda: self.bot_label.configure(text="Bot: Error", text_color=COLORS["error"]))
         finally:
             loop.close()
@@ -536,9 +556,9 @@ class DashboardFrame(ctk.CTkFrame):
                 asyncio.set_event_loop(loop)
                 providers = loop.run_until_complete(self.client.get_config_providers())
                 loop.close()
-                self.after(0, lambda: self._render_models(providers))
-            except Exception as e:
-                self.after(0, lambda: self._append_log(f"Failed to load models: {e}"))
+                self.after(0, lambda p=providers: self._render_models(p))
+            except Exception as exc:
+                self.after(0, lambda e=str(exc): self._append_log(f"Failed to load models: {e}"))
 
         threading.Thread(target=fetch, daemon=True).start()
 
@@ -591,8 +611,21 @@ class App(ctk.CTk):
         ctk.set_appearance_mode("light")
         ctk.set_default_color_theme("blue")
 
+        setup_logging()
+        self._logger = logging.getLogger("tp-opencode.gui")
+        self._logger.info("GUI application starting")
+
         self.settings: Settings | None = None
+        self._bind_error_handler()
         self._build()
+
+    def _bind_error_handler(self) -> None:
+        original_report = self.report_callback_exception
+        def handle_exception(exc, val, tb):
+            log_exception(exc, "Tkinter callback")
+            self._logger.error("Unhandled GUI error: %s", val)
+            original_report(exc, val, tb)
+        self.report_callback_exception = handle_exception
 
     def _build(self) -> None:
         env_file = DEFAULT_CONFIG_DIR / ".env"

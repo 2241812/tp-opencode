@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+import inspect
 import logging
 from typing import Any, Callable
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 
@@ -15,20 +17,36 @@ class TaskScheduler:
 
     def __init__(self, max_tasks: int = 10) -> None:
         self.max_tasks = max_tasks
-        self._scheduler = AsyncIOScheduler()
+        self._scheduler = BackgroundScheduler(daemon=True)
         self._tasks: dict[str, dict[str, Any]] = {}
         self._callbacks: dict[str, Callable] = {}
 
     def start(self) -> None:
-        self._scheduler.start()
-        logger.info("Task scheduler started")
+        if not self._scheduler.running:
+            self._scheduler.start()
+            logger.info("Task scheduler started")
 
     def stop(self) -> None:
-        self._scheduler.shutdown(wait=False)
-        logger.info("Task scheduler stopped")
+        if self._scheduler.running:
+            self._scheduler.shutdown(wait=False)
+            logger.info("Task scheduler stopped")
 
     def register_callback(self, name: str, callback: Callable) -> None:
         self._callbacks[name] = callback
+
+    def _wrap_callback(self, callback: Callable) -> Callable:
+        if inspect.iscoroutinefunction(callback):
+            def async_wrapper(*args, **kwargs):
+                try:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    loop.run_until_complete(callback(*args, **kwargs))
+                except Exception:
+                    logger.exception("Scheduled async task failed")
+                finally:
+                    loop.close()
+            return async_wrapper
+        return callback
 
     def add_interval_task(
         self,
@@ -51,7 +69,7 @@ class TaskScheduler:
 
         trigger = IntervalTrigger(minutes=interval_minutes)
         self._scheduler.add_job(
-            callback,
+            self._wrap_callback(callback),
             trigger,
             args=[prompt, project_id, model_provider, model_id],
             id=task_id,
@@ -101,7 +119,7 @@ class TaskScheduler:
             return False
 
         self._scheduler.add_job(
-            callback,
+            self._wrap_callback(callback),
             trigger,
             args=[prompt, project_id, model_provider, model_id],
             id=task_id,
