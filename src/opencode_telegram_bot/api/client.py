@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from typing import Any, AsyncGenerator
@@ -35,81 +34,151 @@ class OpenCodeClient:
         resp.raise_for_status()
         return resp
 
-    async def _post(self, path: str, **kwargs: Any) -> httpx.Response:
-        resp = await self._client.post(path, **kwargs)
+    async def _post(self, path: str, json: dict | None = None, **kwargs: Any) -> httpx.Response:
+        resp = await self._client.post(path, json=json, **kwargs)
+        resp.raise_for_status()
+        return resp
+
+    async def _delete(self, path: str, **kwargs: Any) -> httpx.Response:
+        resp = await self._client.delete(path, **kwargs)
+        resp.raise_for_status()
+        return resp
+
+    async def _patch(self, path: str, json: dict | None = None, **kwargs: Any) -> httpx.Response:
+        resp = await self._client.patch(path, json=json, **kwargs)
         resp.raise_for_status()
         return resp
 
     async def health(self) -> dict[str, Any]:
-        resp = await self._get("/health")
+        resp = await self._get("/global/health")
         return resp.json()
 
     async def get_projects(self) -> list[dict[str, Any]]:
-        resp = await self._get("/api/projects")
+        resp = await self._get("/project")
         data = resp.json()
         return data if isinstance(data, list) else []
 
     async def get_current_project(self) -> dict[str, Any]:
-        resp = await self._get("/api/project")
-        return resp.json()
-
-    async def switch_project(self, project_id: str) -> dict[str, Any]:
-        resp = await self._post("/api/project/switch", json={"id": project_id})
+        resp = await self._get("/project/current")
         return resp.json()
 
     async def get_sessions(self) -> list[dict[str, Any]]:
-        resp = await self._get("/api/sessions")
+        resp = await self._get("/session")
         data = resp.json()
         return data if isinstance(data, list) else []
 
-    async def create_session(self, agent: str = "build") -> dict[str, Any]:
-        resp = await self._post("/api/sessions", json={"agent": agent})
+    async def create_session(
+        self,
+        title: str | None = None,
+        parent_id: str | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {}
+        if title:
+            body["title"] = title
+        if parent_id:
+            body["parentID"] = parent_id
+        resp = await self._post("/session", json=body)
         return resp.json()
 
     async def get_session(self, session_id: str) -> dict[str, Any]:
-        resp = await self._get(f"/api/sessions/{session_id}")
+        resp = await self._get(f"/session/{session_id}")
         return resp.json()
 
-    async def delete_session(self, session_id: str) -> dict[str, Any]:
-        resp = await self._post(f"/api/sessions/{session_id}/delete")
-        return resp.json()
-
-    async def compact_session(self, session_id: str) -> dict[str, Any]:
-        resp = await self._post(f"/api/sessions/{session_id}/compact")
+    async def delete_session(self, session_id: str) -> bool:
+        resp = await self._delete(f"/session/{session_id}")
         return resp.json()
 
     async def rename_session(self, session_id: str, title: str) -> dict[str, Any]:
-        resp = await self._post(f"/api/sessions/{session_id}/rename", json={"title": title})
+        resp = await self._patch(f"/session/{session_id}", json={"title": title})
         return resp.json()
 
-    async def abort_session(self, session_id: str) -> dict[str, Any]:
-        resp = await self._post(f"/api/sessions/{session_id}/abort")
+    async def abort_session(self, session_id: str) -> bool:
+        resp = await self._post(f"/session/{session_id}/abort")
         return resp.json()
 
-    async def get_models(self) -> dict[str, Any]:
-        resp = await self._get("/api/models")
+    async def summarize_session(self, session_id: str) -> bool:
+        resp = await self._post(f"/session/{session_id}/summarize", json={})
         return resp.json()
 
-    async def switch_model(self, provider: str, model_id: str) -> dict[str, Any]:
-        resp = await self._post("/api/models/switch", json={"provider": provider, "model": model_id})
+    async def get_session_status(self) -> dict[str, Any]:
+        resp = await self._get("/session/status")
         return resp.json()
+
+    async def get_session_todo(self, session_id: str) -> list[dict[str, Any]]:
+        resp = await self._get(f"/session/{session_id}/todo")
+        data = resp.json()
+        return data if isinstance(data, list) else []
+
+    async def get_messages(self, session_id: str, limit: int = 50) -> list[dict[str, Any]]:
+        resp = await self._get(f"/session/{session_id}/message", params={"limit": limit})
+        data = resp.json()
+        return data if isinstance(data, list) else []
 
     async def send_message(
         self,
         session_id: str,
         message: str,
-        files: list[dict[str, str]] | None = None,
+        model: str | None = None,
+        agent: str | None = None,
     ) -> dict[str, Any]:
-        payload: dict[str, Any] = {"message": message}
-        if files:
-            payload["files"] = files
-        resp = await self._post(f"/api/sessions/{session_id}/message", json=payload)
+        body: dict[str, Any] = {
+            "parts": [{"type": "text", "text": message}]
+        }
+        if model:
+            body["model"] = model
+        if agent:
+            body["agent"] = agent
+        resp = await self._post(f"/session/{session_id}/message", json=body)
         return resp.json()
 
-    async def stream_session_events(self, session_id: str) -> AsyncGenerator[dict[str, Any], None]:
-        """Subscribe to SSE events for a session."""
-        url = f"/api/sessions/{session_id}/events"
-        async with self._client.stream("GET", url) as resp:
+    async def send_message_async(
+        self,
+        session_id: str,
+        message: str,
+        model: str | None = None,
+        agent: str | None = None,
+    ) -> None:
+        body: dict[str, Any] = {
+            "parts": [{"type": "text", "text": message}]
+        }
+        if model:
+            body["model"] = model
+        if agent:
+            body["agent"] = agent
+        await self._post(f"/session/{session_id}/prompt_async", json=body)
+
+    async def get_providers(self) -> dict[str, Any]:
+        resp = await self._get("/provider")
+        return resp.json()
+
+    async def get_config_providers(self) -> dict[str, Any]:
+        resp = await self._get("/config/providers")
+        return resp.json()
+
+    async def get_agents(self) -> list[dict[str, Any]]:
+        resp = await self._get("/agent")
+        data = resp.json()
+        return data if isinstance(data, list) else []
+
+    async def get_commands(self) -> list[dict[str, Any]]:
+        resp = await self._get("/command")
+        data = resp.json()
+        return data if isinstance(data, list) else []
+
+    async def run_command(
+        self,
+        session_id: str,
+        command: str,
+        arguments: str = "",
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"command": command}
+        if arguments:
+            body["arguments"] = arguments
+        resp = await self._post(f"/session/{session_id}/command", json=body)
+        return resp.json()
+
+    async def stream_events(self) -> AsyncGenerator[dict[str, Any], None]:
+        async with self._client.stream("GET", "/event") as resp:
             resp.raise_for_status()
             buffer = ""
             async for chunk in resp.aiter_text():
@@ -120,6 +189,13 @@ class OpenCodeClient:
                         event = self._parse_sse_event(event_str)
                         if event:
                             yield event
+
+    async def stream_session_events(self, session_id: str) -> AsyncGenerator[dict[str, Any], None]:
+        async for event in self.stream_events():
+            data = event.get("data", {})
+            props = data.get("properties", {})
+            if props.get("sessionID") == session_id:
+                yield event
 
     @staticmethod
     def _parse_sse_event(text: str) -> dict[str, Any] | None:
@@ -138,22 +214,24 @@ class OpenCodeClient:
                 return None
         return None
 
-    async def get_session_status(self, session_id: str) -> dict[str, Any]:
-        try:
-            session = await self.get_session(session_id)
-            return {
-                "session_id": session_id,
-                "status": session.get("status", "idle"),
-                "model": session.get("model", ""),
-                "tokens": session.get("tokens", {}),
-                "agent": session.get("agent", "build"),
-            }
-        except Exception:
-            return {"session_id": session_id, "status": "error"}
+    @staticmethod
+    def extract_text_from_response(response: dict[str, Any]) -> str:
+        parts = response.get("parts", [])
+        text_parts = []
+        for part in parts:
+            if part.get("type") == "text":
+                text_parts.append(part.get("text", ""))
+        return "\n".join(text_parts)
 
-    async def run_custom_command(self, command: str, session_id: str | None = None) -> dict[str, Any]:
-        payload = {"command": command}
-        if session_id:
-            payload["session_id"] = session_id
-        resp = await self._post("/api/commands/run", json=payload)
-        return resp.json()
+    @staticmethod
+    def extract_tool_calls(response: dict[str, Any]) -> list[dict[str, Any]]:
+        parts = response.get("parts", [])
+        tool_calls = []
+        for part in parts:
+            if part.get("type") == "tool":
+                tool_calls.append({
+                    "name": part.get("name", part.get("toolName", "unknown")),
+                    "input": part.get("input", {}),
+                    "status": part.get("status", "unknown"),
+                })
+        return tool_calls

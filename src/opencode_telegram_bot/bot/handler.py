@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import tempfile
+import traceback
 import uuid
 from pathlib import Path
 from typing import Any
@@ -14,7 +15,6 @@ from telegram import (
     Update,
 )
 from telegram.ext import (
-    Application,
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
@@ -28,13 +28,10 @@ from opencode_telegram_bot.utils import (
     TaskScheduler,
     TextToSpeech,
     VoiceTranscriber,
-    get_available_locales,
     t,
 )
 
 logger = logging.getLogger(__name__)
-
-PENDING_ANSWERS: dict[str, str] = {}
 
 
 class BotHandler:
@@ -72,8 +69,10 @@ class BotHandler:
             model=settings.tts_model,
             voice=settings.tts_voice,
         )
-        self._active_streams: dict[str, asyncio.Task] = {}
         self._lock = asyncio.Lock()
+        self._cached_providers: list[dict[str, Any]] = []
+        self._cached_agents: list[dict[str, Any]] = []
+        self._cached_commands: list[dict[str, Any]] = []
 
         self.scheduler.register_callback("run_task", self._run_scheduled_task)
 
@@ -87,7 +86,7 @@ class BotHandler:
         return str(user_id) == str(allowed)
 
     async def _send(self, context: ContextTypes.DEFAULT_TYPE, chat_id: int, text: str, **kwargs: Any) -> Any:
-        parse_mode = kwargs.pop("parse_mode", "MarkdownV2" if self.settings.message_format_mode == "markdown" else None)
+        parse_mode = kwargs.pop("parse_mode", None)
         try:
             return await context.bot.send_message(
                 chat_id=chat_id,
@@ -96,7 +95,7 @@ class BotHandler:
                 **kwargs,
             )
         except Exception as e:
-            logger.warning("Failed to send message: %s", e)
+            logger.warning("Failed to send with parse_mode=%s: %s", parse_mode, e)
             try:
                 return await context.bot.send_message(chat_id=chat_id, text=text, **kwargs)
             except Exception:
@@ -107,31 +106,54 @@ class BotHandler:
             session_id = self.bot_settings.current_session_id
             if not session_id:
                 return
-            status = await self.client.get_session_status(session_id)
             project = await self.client.get_current_project()
-            project_name = project.get("name", project.get("path", "unknown"))
-            model = status.get("model", self.settings.opencode_model_id)
-            tokens_data = status.get("tokens", {})
-            tokens_used = tokens_data.get("total", tokens_data.get("completion", 0))
-            tokens_max = tokens_data.get("limit", "N/A")
-            agent = status.get("agent", "build")
-            mode_emoji = "📋" if agent == "plan" else "🔨"
-            text = (
-                f"{mode_emoji} *{agent.upper()}* | {model}\n"
-                f"📁 {project_name} | 🔑 {tokens_used}/{tokens_max}"
-            )
-            try:
-                await context.bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=self.bot_settings.get("status_message_id", 0),
-                    text=text,
-                    parse_mode="Markdown",
-                )
-            except Exception:
-                msg = await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
-                self.bot_settings.set("status_message_id", msg.message_id)
+            project_name = project.get("path", project.get("name", "unknown"))
+            agent_mode = self.bot_settings.get("agent_mode", "build")
+            mode_emoji = "📋" if agent_mode == "plan" else "🔨"
+            text = f"{mode_emoji} *{agent_mode.upper()}* | {self.settings.opencode_model_id}\n📁 {project_name}"
+            msg_id = self.bot_settings.get("status_message_id")
+            if msg_id:
+                try:
+                    await context.bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=msg_id,
+                        text=text,
+                        parse_mode="Markdown",
+                    )
+                    return
+                except Exception:
+                    pass
+            msg = await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
+            self.bot_settings.set("status_message_id", msg.message_id)
         except Exception:
             pass
+
+    async def _ensure_session(self) -> str:
+        session_id = self.bot_settings.current_session_id
+        if session_id:
+            return session_id
+        session = await self.client.create_session()
+        session_id = session.get("id", str(uuid.uuid4()))
+        self.bot_settings.current_session_id = session_id
+        return session_id
+
+    async def _cache_metadata(self) -> None:
+        if not self._cached_providers:
+            try:
+                providers_data = await self.client.get_providers()
+                self._cached_providers = providers_data.get("all", [])
+            except Exception:
+                pass
+        if not self._cached_agents:
+            try:
+                self._cached_agents = await self.client.get_agents()
+            except Exception:
+                pass
+        if not self._cached_commands:
+            try:
+                self._cached_commands = await self.client.get_commands()
+            except Exception:
+                pass
 
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_authorized(update.effective_user.id):
@@ -152,13 +174,10 @@ class BotHandler:
             health = await self.client.health()
             project = await self.client.get_current_project()
             session_id = self.bot_settings.current_session_id
-            session_info = "None"
-            if session_id:
-                status = await self.client.get_session_status(session_id)
-                session_info = f"{session_id} ({status.get('status', 'unknown')})"
-            project_name = project.get("name", project.get("path", "unknown"))
+            session_info = f"{session_id}" if session_id else "None"
+            project_name = project.get("path", project.get("name", "unknown"))
             text = (
-                f"Server: {health.get('status', 'unknown')}\n"
+                f"Server: {health.get('healthy', health.get('status', 'unknown'))}\n"
                 f"Project: {project_name}\n"
                 f"Session: {session_info}\n"
                 f"Model: {self.settings.opencode_model_provider}/{self.settings.opencode_model_id}"
@@ -171,11 +190,10 @@ class BotHandler:
         if not self._is_authorized(update.effective_user.id):
             return
         try:
-            agent = self.bot_settings.get("agent_mode", "build")
-            session = await self.client.create_session(agent=agent)
-            session_id = session.get("id", session.get("session_id", str(uuid.uuid4())))
+            session = await self.client.create_session()
+            session_id = session.get("id", str(uuid.uuid4()))
             self.bot_settings.current_session_id = session_id
-            await update.message.reply_text(t("new_session", locale=self._locale(), session_id=session_id))
+            await update.message.reply_text(t("new_session", locale=self._locale(), session_id=session_id[:12]))
             await self._send_status_bar(context, update.message.chat_id)
         except Exception as e:
             await update.message.reply_text(t("error", locale=self._locale(), message=str(e)))
@@ -204,8 +222,8 @@ class BotHandler:
                 return
             keyboard = []
             for s in sessions[:limit]:
-                sid = s.get("id", s.get("session_id", ""))
-                title = s.get("title", s.get("path", sid[:8]))
+                sid = s.get("id", "")
+                title = s.get("summary", s.get("path", sid[:12]))
                 keyboard.append([InlineKeyboardButton(title, callback_data=f"session:{sid}")])
             reply_markup = InlineKeyboardMarkup(keyboard)
             await update.message.reply_text(t("sessions_title", locale=self._locale()), reply_markup=reply_markup)
@@ -220,9 +238,9 @@ class BotHandler:
             limit = self.settings.projects_list_limit
             keyboard = []
             for p in projects[:limit]:
-                pid = p.get("id", p.get("path", ""))
-                name = p.get("name", p.get("path", pid))
-                keyboard.append([InlineKeyboardButton(name, callback_data=f"project:{pid}")])
+                path = p.get("path", "")
+                name = p.get("name", Path(path).name if path else "unknown")
+                keyboard.append([InlineKeyboardButton(name, callback_data=f"project:{path}")])
             reply_markup = InlineKeyboardMarkup(keyboard)
             await update.message.reply_text(t("projects_title", locale=self._locale()), reply_markup=reply_markup)
         except Exception as e:
@@ -260,7 +278,7 @@ class BotHandler:
             await update.message.reply_text(t("no_session", locale=self._locale()))
             return
         try:
-            await self.client.compact_session(session_id)
+            await self.client.summarize_session(session_id)
             await update.message.reply_text(t("compact_done", locale=self._locale()))
         except Exception as e:
             await update.message.reply_text(t("error", locale=self._locale(), message=str(e)))
@@ -278,14 +296,24 @@ class BotHandler:
         if not self._is_authorized(update.effective_user.id):
             return
         try:
-            models_data = await self.client.get_models()
+            await self._cache_metadata()
             keyboard = []
-            models_list = models_data.get("models", models_data if isinstance(models_data, list) else [])
-            for m in models_list[:20]:
-                mid = m.get("id", m.get("model", ""))
-                provider = m.get("provider", m.get("name", ""))
-                label = f"{provider}/{mid}" if provider else mid
-                keyboard.append([InlineKeyboardButton(label, callback_data=f"model:{provider}:{mid}")])
+            providers_data = await self.client.get_config_providers()
+            providers = providers_data.get("providers", [])
+            for p in providers[:15]:
+                pid = p.get("id", p.get("name", ""))
+                models = p.get("models", [])
+                for m in models[:5]:
+                    mid = m.get("id", m.get("name", ""))
+                    label = f"{pid}/{mid}"
+                    keyboard.append([InlineKeyboardButton(label, callback_data=f"model:{pid}:{mid}")])
+            if not keyboard:
+                for p in self._cached_providers[:10]:
+                    pid = p.get("id", p.get("name", ""))
+                    keyboard.append([InlineKeyboardButton(pid, callback_data=f"model:{pid}:")])
+            if not keyboard:
+                await update.message.reply_text("No models available. Configure providers in OpenCode first.")
+                return
             reply_markup = InlineKeyboardMarkup(keyboard)
             await update.message.reply_text(t("models_title", locale=self._locale()), reply_markup=reply_markup)
         except Exception as e:
@@ -295,10 +323,14 @@ class BotHandler:
         if not self._is_authorized(update.effective_user.id):
             return
         try:
-            commands = ["init", "review", "commit", "test"]
+            await self._cache_metadata()
+            commands = self._cached_commands
+            if not commands:
+                commands = [{"id": "init", "name": "init"}, {"id": "review", "name": "review"}]
             keyboard = []
             for cmd in commands[: self.settings.commands_list_limit]:
-                keyboard.append([InlineKeyboardButton(cmd, callback_data=f"runcmd:{cmd}")])
+                name = cmd.get("name", cmd.get("id", ""))
+                keyboard.append([InlineKeyboardButton(name, callback_data=f"runcmd:{name}")])
             reply_markup = InlineKeyboardMarkup(keyboard)
             await update.message.reply_text(t("commands_title", locale=self._locale()), reply_markup=reply_markup)
         except Exception as e:
@@ -343,11 +375,10 @@ class BotHandler:
         if not tasks:
             await update.message.reply_text(t("no_tasks", locale=self._locale()))
             return
-        lines = [t("task_list", locale=self._locale())]
         for tid, info in tasks.items():
-            lines.append(f"• {tid}: {info.get('prompt', '')[:50]}...")
+            lines = [f"{tid}: {info.get('prompt', '')[:80]}"]
             keyboard = [[InlineKeyboardButton("Delete", callback_data=f"deltask:{tid}")]]
-            await update.message.reply_text("\n".join(lines[-2:]), reply_markup=InlineKeyboardMarkup(keyboard))
+            await update.message.reply_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(keyboard))
 
     async def callback_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
@@ -360,41 +391,32 @@ class BotHandler:
         if data.startswith("session:"):
             session_id = data.split(":", 1)[1]
             self.bot_settings.current_session_id = session_id
-            await self._send(context, chat_id, t("switched_session", locale=self._locale(), session_id=session_id))
+            await self._send(context, chat_id, t("switched_session", locale=self._locale(), session_id=session_id[:12]))
             await self._send_status_bar(context, chat_id)
 
         elif data.startswith("project:"):
-            project_id = data.split(":", 1)[1]
-            try:
-                await self.client.switch_project(project_id)
-                self.bot_settings.current_project_id = project_id
-                await self._send(context, chat_id, t("switched_project", locale=self._locale(), project=project_id))
-            except Exception as e:
-                await self._send(context, chat_id, t("error", locale=self._locale(), message=str(e)))
+            project_path = data.split(":", 1)[1]
+            await self._send(context, chat_id, t("switched_project", locale=self._locale(), project=project_path))
             await self._send_status_bar(context, chat_id)
 
         elif data.startswith("model:"):
             parts = data.split(":", 2)
             provider = parts[1]
             model_id = parts[2]
-            try:
-                await self.client.switch_model(provider, model_id)
-                await self._send(
-                    context,
-                    chat_id,
-                    t("model_switched", locale=self._locale(), provider=provider, model=model_id),
-                )
-            except Exception as e:
-                await self._send(context, chat_id, t("error", locale=self._locale(), message=str(e)))
+            model_str = f"{provider}/{model_id}" if model_id else provider
+            await self._send(context, chat_id, t("model_switched", locale=self._locale(), provider=provider, model=model_id or "default"))
 
         elif data.startswith("runcmd:"):
             command = data.split(":", 1)[1]
             await self._send(context, chat_id, t("command_running", locale=self._locale(), command=command))
             try:
-                session_id = self.bot_settings.current_session_id
-                result = await self.client.run_custom_command(command, session_id)
-                result_text = str(result.get("output", result))[:4000]
-                await self._send(context, chat_id, f"```\n{result_text}\n```")
+                session_id = await self._ensure_session()
+                result = await self.client.run_command(session_id, command)
+                result_text = OpenCodeClient.extract_text_from_response(result)
+                if result_text:
+                    await self._send(context, chat_id, result_text[:4000])
+                else:
+                    await self._send(context, chat_id, str(result)[:4000])
             except Exception as e:
                 await self._send(context, chat_id, t("error", locale=self._locale(), message=str(e)))
 
@@ -403,20 +425,16 @@ class BotHandler:
             if self.scheduler.remove_task(task_id):
                 await self._send(context, chat_id, t("task_deleted", locale=self._locale(), task_id=task_id))
 
-        elif data.startswith("perm:"):
-            action = data.split(":")[1]
-            question_id = data.split(":")[2]
-            answer = "yes" if action == "approve" else "no"
-            PENDING_ANSWERS[question_id] = answer
-            label = t("permission_approved", locale=self._locale()) if action == "approve" else t("permission_denied", locale=self._locale())
-            await self._send(context, chat_id, label)
-
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_authorized(update.effective_user.id):
             return
         chat_id = update.message.chat_id
 
-        if update.message.voice or update.message.audio or update.message.document:
+        if update.message.voice or update.message.audio:
+            await self._handle_media(update, context)
+            return
+
+        if update.message.document and update.message.document.mime_type.startswith("audio"):
             await self._handle_media(update, context)
             return
 
@@ -466,100 +484,43 @@ class BotHandler:
         prompt: str,
         context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
-        session_id = self.bot_settings.current_session_id
-        if not session_id:
-            try:
-                agent = self.bot_settings.get("agent_mode", "build")
-                session = await self.client.create_session(agent=agent)
-                session_id = session.get("id", session.get("session_id", str(uuid.uuid4())))
-                self.bot_settings.current_session_id = session_id
-            except Exception as e:
-                await self._send(context, chat_id, t("error", locale=self._locale(), message=str(e)))
-                return
+        try:
+            session_id = await self._ensure_session()
+        except Exception as e:
+            logger.error("Failed to create session: %s\n%s", e, traceback.format_exc())
+            await self._send(context, chat_id, t("error", locale=self._locale(), message=str(e)))
+            return
 
         thinking_msg = await self._send(context, chat_id, t("thinking", locale=self._locale()))
 
         try:
-            await self.client.send_message(session_id, prompt)
+            agent_mode = self.bot_settings.get("agent_mode", "build")
+            response = await self.client.send_message(session_id, prompt, agent=agent_mode)
 
-            if self.settings.response_streaming:
-                await self._stream_response(session_id, chat_id, context, thinking_msg)
-            else:
-                await self._poll_response(session_id, chat_id, context, thinking_msg)
-        except Exception as e:
-            await self._send(context, chat_id, t("error", locale=self._locale(), message=str(e)))
+            response_text = OpenCodeClient.extract_text_from_response(response)
+            tool_calls = OpenCodeClient.extract_tool_calls(response)
 
-        await self._send_status_bar(context, chat_id)
-
-    async def _stream_response(
-        self,
-        session_id: str,
-        chat_id: int,
-        context: ContextTypes.DEFAULT_TYPE,
-        thinking_msg: Any,
-    ) -> None:
-        response_text = ""
-        response_message = None
-        try:
-            async for event in self.client.stream_session_events(session_id):
-                event_type = event.get("type", "")
-                data = event.get("data", {})
-
-                if event_type in ("text", "text/delta", "message.delta"):
-                    delta = data.get("delta", data.get("text", ""))
-                    if delta:
-                        response_text += delta
-                        if len(response_text) > 4000:
-                            if response_message:
-                                try:
-                                    await context.bot.edit_message_text(
-                                        chat_id=chat_id,
-                                        message_id=response_message.message_id,
-                                        text=response_text[:4000],
-                                    )
-                                except Exception:
-                                    pass
-                            response_text = response_text[4000:]
-                            response_message = None
-
-                        if not response_message:
-                            response_message = await context.bot.send_message(
-                                chat_id=chat_id,
-                                text=response_text[:4000],
-                            )
-                        else:
-                            try:
-                                await context.bot.edit_message_text(
-                                    chat_id=chat_id,
-                                    message_id=response_message.message_id,
-                                    text=response_text[:4000],
-                                )
-                            except Exception:
-                                response_message = await context.bot.send_message(
-                                    chat_id=chat_id,
-                                    text=response_text[:4000],
-                                )
-
-                elif event_type in ("tool_call", "tool"):
-                    tool_name = data.get("tool", data.get("name", "unknown"))
-                    tool_input = data.get("input", data.get("args", ""))
-                    detail = str(tool_input)[: self.settings.bash_tool_display_max_length]
-                    if not self.settings.hide_tool_call_messages:
-                        tool_msg = t("tool_call", locale=self._locale(), tool=tool_name, detail=detail)
-                        await self._send(context, chat_id, tool_msg)
+            if tool_calls and not self.settings.hide_tool_call_messages:
+                for tc in tool_calls:
+                    detail = str(tc.get("input", ""))[: self.settings.bash_tool_display_max_length]
+                    await self._send(
+                        context, chat_id,
+                        t("tool_call", locale=self._locale(), tool=tc["name"], detail=detail),
+                    )
 
             if response_text:
-                if response_message:
-                    try:
-                        await context.bot.edit_message_text(
-                            chat_id=chat_id,
-                            message_id=response_message.message_id,
-                            text=response_text[:4000],
-                        )
-                    except Exception:
-                        pass
+                if len(response_text) > 4000:
+                    with tempfile.NamedTemporaryFile(suffix=".txt", delete=False, mode="w", encoding="utf-8") as f:
+                        f.write(response_text)
+                        f.flush()
+                    await context.bot.send_document(
+                        chat_id=chat_id,
+                        document=open(f.name, "rb"),
+                        filename="response.txt",
+                    )
+                    os.unlink(f.name)
                 else:
-                    await context.bot.send_message(chat_id=chat_id, text=response_text[:4000])
+                    await self._send(context, chat_id, response_text)
 
                 if self.bot_settings.tts_enabled and self.tts.is_configured:
                     audio = await self.tts.synthesize(response_text[:4000])
@@ -569,55 +530,16 @@ class BotHandler:
                             audio_path = f.name
                         await context.bot.send_voice(chat_id=chat_id, voice=open(audio_path, "rb"))
                         os.unlink(audio_path)
-
-        except Exception as e:
-            logger.error("Streaming error: %s", e)
-            if response_text:
-                await self._send(context, chat_id, response_text[:4000])
             else:
-                await self._send(context, chat_id, t("error", locale=self._locale(), message=str(e)))
+                raw = str(response)[:4000]
+                if raw and raw != "{}":
+                    await self._send(context, chat_id, raw)
 
-    async def _poll_response(
-        self,
-        session_id: str,
-        chat_id: int,
-        context: ContextTypes.DEFAULT_TYPE,
-        thinking_msg: Any,
-    ) -> None:
-        max_polls = 300
-        interval = self.settings.service_messages_interval_sec
-        last_text = ""
-        for _ in range(max_polls):
-            await asyncio.sleep(interval)
-            try:
-                status = await self.client.get_session_status(session_id)
-                if status.get("status") in ("idle", "done", "error"):
-                    break
-            except Exception:
-                continue
-
-        try:
-            session = await self.client.get_session(session_id)
-            messages = session.get("messages", [])
-            for msg in reversed(messages):
-                if msg.get("role") == "assistant":
-                    text = msg.get("content", msg.get("text", ""))
-                    if text and text != last_text:
-                        if len(text) > 4000:
-                            with tempfile.NamedTemporaryFile(suffix=".txt", delete=False, mode="w") as f:
-                                f.write(text)
-                                f.flush()
-                            await context.bot.send_document(
-                                chat_id=chat_id,
-                                document=open(f.name, "rb"),
-                                filename="response.txt",
-                            )
-                            os.unlink(f.name)
-                        else:
-                            await self._send(context, chat_id, text)
-                        break
         except Exception as e:
+            logger.error("Prompt processing failed: %s\n%s", e, traceback.format_exc())
             await self._send(context, chat_id, t("error", locale=self._locale(), message=str(e)))
+
+        await self._send_status_bar(context, chat_id)
 
     async def _run_scheduled_task(
         self,
@@ -628,12 +550,8 @@ class BotHandler:
     ) -> None:
         logger.info("Running scheduled task: %s", prompt[:100])
         try:
-            if project_id:
-                await self.client.switch_project(project_id)
-            if model_provider and model_id:
-                await self.client.switch_model(model_provider, model_id)
-            session = await self.client.create_session(agent="build")
-            session_id = session.get("id", session.get("session_id", str(uuid.uuid4())))
+            session = await self.client.create_session()
+            session_id = session.get("id", str(uuid.uuid4()))
             await self.client.send_message(session_id, prompt)
             logger.info("Scheduled task sent to session %s", session_id)
         except Exception as e:
@@ -641,5 +559,3 @@ class BotHandler:
 
     async def cleanup(self) -> None:
         await self.client.close()
-        for task in self._active_streams.values():
-            task.cancel()
