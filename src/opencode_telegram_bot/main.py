@@ -95,8 +95,18 @@ async def run_bot() -> None:
     scheduler = TaskScheduler(max_tasks=settings.task_limit)
 
     from opencode_telegram_bot.bot import BotHandler
+    from opencode_telegram_bot.api import OpenCodeClient, OpenCodeServer
 
-    handler = BotHandler(settings, bot_settings, session_manager, scheduler)
+    client = OpenCodeClient(
+        base_url=settings.opencode_api_url,
+        username=settings.opencode_server_username,
+        password=settings.opencode_server_password or None,
+    )
+    server = OpenCodeServer(
+        command=settings.opencode_command or "opencode",
+        work_dir=settings.opencode_work_dir or None,
+    )
+    handler = BotHandler(settings, bot_settings, session_manager, scheduler, client=client, server=server)
 
     if settings.opencode_auto_start and not handler.server.is_running:
         handler.server.start()

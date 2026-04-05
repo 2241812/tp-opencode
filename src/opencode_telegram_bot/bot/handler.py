@@ -42,39 +42,46 @@ class BotHandler:
         settings: Any,
         bot_settings: BotSettings,
         session_manager: SessionManager,
-        scheduler: TaskScheduler,
+        scheduler: TaskScheduler | None = None,
+        client: OpenCodeClient | None = None,
+        server: OpenCodeServer | None = None,
     ) -> None:
         self.settings = settings
         self.bot_settings = bot_settings
         self.session_manager = session_manager
         self.scheduler = scheduler
-        self.client = OpenCodeClient(
-            base_url=settings.opencode_api_url,
-            username=settings.opencode_server_username,
-            password=settings.opencode_server_password or None,
-        )
-        self.server = OpenCodeServer(
-            command=settings.opencode_command,
-            work_dir=settings.opencode_work_dir or None,
-        )
-        self.transcriber = VoiceTranscriber(
-            api_url=settings.stt_api_url,
-            api_key=settings.stt_api_key,
-            model=settings.stt_model,
-            language=settings.stt_language,
-        )
-        self.tts = TextToSpeech(
-            api_url=settings.tts_api_url,
-            api_key=settings.tts_api_key,
-            model=settings.tts_model,
-            voice=settings.tts_voice,
-        )
         self._lock = asyncio.Lock()
         self._cached_providers: list[dict[str, Any]] = []
         self._cached_agents: list[dict[str, Any]] = []
         self._cached_commands: list[dict[str, Any]] = []
 
-        self.scheduler.register_callback("run_task", self._run_scheduled_task)
+        self.client = client or OpenCodeClient(
+            base_url=settings.opencode_api_url,
+            username=settings.opencode_server_username,
+            password=settings.opencode_server_password or None,
+        )
+
+        self.server = server or OpenCodeServer(
+            command=settings.opencode_command or "opencode",
+            work_dir=settings.opencode_work_dir or None,
+        )
+
+        self.transcriber = VoiceTranscriber(
+            api_url=getattr(settings, "stt_api_url", ""),
+            api_key=getattr(settings, "stt_api_key", ""),
+            model=getattr(settings, "stt_model", "whisper-large-v3-turbo"),
+            language=getattr(settings, "stt_language", ""),
+        )
+
+        self.tts = TextToSpeech(
+            api_url=getattr(settings, "tts_api_url", ""),
+            api_key=getattr(settings, "tts_api_key", ""),
+            model=getattr(settings, "tts_model", "gpt-4o-mini-tts"),
+            voice=getattr(settings, "tts_voice", "alloy"),
+        )
+
+        if self.scheduler is not None:
+            self.scheduler.register_callback("run_task", self._run_scheduled_task)
 
     def _locale(self) -> str:
         return self.settings.bot_locale or "en"
