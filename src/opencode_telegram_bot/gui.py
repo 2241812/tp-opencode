@@ -165,13 +165,17 @@ class SetupFrame(ctk.CTkFrame):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(4, weight=1)
 
-        header = ctk.CTkFrame(self, fg_color=COLORS["bg"], height=120)
+        header = ctk.CTkFrame(self, fg_color=COLORS["bg"], height=160)
         header.grid(row=0, column=0, sticky="ew", padx=0, pady=0)
         header.grid_columnconfigure(0, weight=1)
         header.grid_propagate(False)
 
-        _CTkLabelTitle(header, text="Setup").grid(row=0, column=0, padx=(40, 40), pady=(30, 2), sticky="w")
-        _CTkLabelSubtitle(header, text="Configure your OpenCode Telegram Bot").grid(row=1, column=0, padx=(40, 40), pady=(0, 10), sticky="w")
+        _CTkLabelTitle(header, text="Setup").grid(row=0, column=0, padx=(40, 40), pady=(20, 2), sticky="w")
+        _CTkLabelSubtitle(header, text="Configure your OpenCode Telegram Bot").grid(row=1, column=0, padx=(40, 40), pady=(0, 6), sticky="w")
+        intro_text = ctk.CTkTextbox(header, height=48, corner_radius=0, border_width=0, fg_color=COLORS["bg"], text_color=COLORS["text_secondary"], font=ctk.CTkFont(size=13))
+        intro_text.grid(row=2, column=0, padx=(40, 40), pady=(0, 8), sticky="ew")
+        intro_text.insert("1.0", "Connect your Telegram bot to OpenCode AI. Get your bot token from @BotFather and user ID from @userinfobot. Then enter your OpenCode server details below to link them together.")
+        intro_text.configure(state="disabled")
 
         content = ctk.CTkScrollableFrame(self, fg_color=COLORS["bg"])
         content.grid(row=1, column=0, sticky="nsew", padx=40, pady=10)
@@ -262,6 +266,8 @@ class DashboardFrame(ctk.CTkFrame):
         self._bot_app = None
         self._bot_handler = None
         self._alive = True
+        self.selected_model = ""
+        self._available_models: list[str] = []
 
         self._build()
         self._start_status_poll()
@@ -308,7 +314,9 @@ class DashboardFrame(ctk.CTkFrame):
 
         status_bar = ctk.CTkFrame(self, fg_color=COLORS["bg_secondary"], corner_radius=16, height=56)
         status_bar.grid(row=1, column=0, columnspan=2, padx=40, pady=(0, 16), sticky="ew")
-        status_bar.grid_columnconfigure((0, 1, 2), weight=1)
+        status_bar.grid_columnconfigure(0, weight=1)
+        status_bar.grid_columnconfigure(1, weight=1)
+        status_bar.grid_columnconfigure(2, weight=1)
         status_bar.grid_propagate(False)
 
         self.server_label = _CTkLabelSmall(status_bar, text="Server: Checking...", anchor="w")
@@ -317,8 +325,32 @@ class DashboardFrame(ctk.CTkFrame):
         self.bot_label = _CTkLabelSmall(status_bar, text="Bot: Stopped", anchor="w")
         self.bot_label.grid(row=0, column=1, padx=10, pady=16, sticky="w")
 
-        self.model_label = _CTkLabelSmall(status_bar, text=f"Model: {self.settings.opencode_model_id}", anchor="w")
-        self.model_label.grid(row=0, column=2, padx=(10, 20), pady=16, sticky="w")
+        model_bar = ctk.CTkFrame(status_bar, fg_color=COLORS["bg_secondary"])
+        model_bar.grid(row=0, column=2, padx=(10, 20), pady=16, sticky="w")
+        model_bar.grid_columnconfigure(0, weight=0)
+
+        self.model_label = _CTkLabelSmall(model_bar, text=f"Model: {self.settings.opencode_model_id}", anchor="w")
+        self.model_label.grid(row=0, column=0, padx=(0, 8), sticky="w")
+
+        self.model_var = ctk.StringVar(value="Loading...")
+        self.model_dropdown = ctk.CTkOptionMenu(
+            model_bar,
+            variable=self.model_var,
+            values=["Loading..."],
+            command=self._on_model_selected,
+            width=180,
+            height=32,
+            corner_radius=8,
+            fg_color=COLORS["bg"],
+            button_color=COLORS["border"],
+            button_hover_color=COLORS["accent"],
+            text_color=COLORS["text_primary"],
+            dropdown_fg_color=COLORS["bg"],
+            dropdown_text_color=COLORS["text_primary"],
+            dropdown_hover_color=COLORS["bg_secondary"],
+            font=ctk.CTkFont(size=12),
+        )
+        self.model_dropdown.grid(row=0, column=1, sticky="w")
 
         ctrl_frame = ctk.CTkFrame(self, fg_color=COLORS["bg"], height=60)
         ctrl_frame.grid(row=2, column=0, columnspan=2, padx=40, pady=(0, 16), sticky="ew")
@@ -352,7 +384,7 @@ class DashboardFrame(ctk.CTkFrame):
         self.sessions_text = ctk.CTkTextbox(left_panel, height=150, corner_radius=12, border_width=1, border_color=COLORS["border"], fg_color=COLORS["bg_secondary"], text_color=COLORS["text_primary"], font=ctk.CTkFont(size=13))
         self.sessions_text.grid(row=1, column=0, sticky="ew", pady=(0, 16))
 
-        _CTkLabel(left_panel, text="Models", font=ctk.CTkFont(size=18, weight="bold"), anchor="w").grid(row=2, column=0, pady=(0, 8), sticky="w")
+        _CTkLabel(left_panel, text="Available Models", font=ctk.CTkFont(size=18, weight="bold"), anchor="w").grid(row=2, column=0, pady=(0, 8), sticky="w")
         self.models_frame = ctk.CTkScrollableFrame(left_panel, fg_color=COLORS["bg_secondary"], corner_radius=12, height=250)
         self.models_frame.grid(row=3, column=0, sticky="nsew")
 
@@ -586,7 +618,13 @@ class DashboardFrame(ctk.CTkFrame):
             try:
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
-                providers = loop.run_until_complete(self.client.get_config_providers())
+                try:
+                    providers = loop.run_until_complete(self.client.get_config_providers())
+                except Exception:
+                    try:
+                        providers = loop.run_until_complete(self.client.get_providers())
+                    except Exception:
+                        providers = {}
                 loop.close()
                 self._safe_after(0, self._render_models, providers)
             except Exception as exc:
@@ -603,14 +641,18 @@ class DashboardFrame(ctk.CTkFrame):
         if not isinstance(providers, list):
             providers = []
 
+        model_choices = []
+
         for p in providers:
             pid = p.get("id", p.get("name", "unknown"))
             models = p.get("models", [])
             if not isinstance(models, list):
                 models = []
             _CTkLabel(self.models_frame, text=pid, font=ctk.CTkFont(weight="bold", size=13), text_color=COLORS["text_primary"]).pack(anchor="w", padx=12, pady=(12, 4))
-            for m in models[:8]:
+            for m in models:
                 mid = m.get("id", m.get("name", ""))
+                full = f"{pid}/{mid}"
+                model_choices.append(full)
                 btn = ctk.CTkButton(
                     self.models_frame,
                     text=mid,
@@ -627,12 +669,33 @@ class DashboardFrame(ctk.CTkFrame):
                 )
                 btn.pack(anchor="w", padx=12, pady=2)
 
-        if not providers:
+        if not model_choices:
             _CTkLabelSubtitle(self.models_frame, text="No models found. Configure providers in OpenCode.").pack(pady=20)
+            model_choices = ["No models available"]
+
+        self._available_models = model_choices
+        self.model_dropdown.configure(values=model_choices)
+
+        if self.selected_model and self.selected_model in model_choices:
+            self.model_var.set(self.selected_model)
+        elif model_choices and model_choices[0] != "No models available":
+            self.model_var.set(model_choices[0])
+            self.selected_model = model_choices[0]
+        else:
+            self.model_var.set("No models available")
+
+    def _on_model_selected(self, choice: str) -> None:
+        if choice and choice != "No models available" and choice != "Loading...":
+            self.selected_model = choice
+            self.model_label.configure(text=f"Model: {choice}")
+            self._append_log(f"Model switched to: {choice}")
 
     def _switch_model(self, provider: str, model: str) -> None:
-        self.model_label.configure(text=f"Model: {provider}/{model}")
-        self._append_log(f"Model selected: {provider}/{model}")
+        full = f"{provider}/{model}"
+        self.selected_model = full
+        self.model_label.configure(text=f"Model: {full}")
+        self.model_var.set(full)
+        self._append_log(f"Model selected: {full}")
 
 
 class App(ctk.CTk):
