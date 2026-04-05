@@ -261,9 +261,37 @@ class DashboardFrame(ctk.CTkFrame):
         self._stop_event = threading.Event()
         self._bot_app = None
         self._bot_handler = None
+        self._alive = True
 
         self._build()
         self._start_status_poll()
+
+    def _safe_after(self, delay: int, func, *args, **kwargs) -> str | None:
+        if not self._alive:
+            return None
+        try:
+            if not self.winfo_exists():
+                return None
+        except Exception:
+            return None
+        def wrapper():
+            if not self._alive:
+                return
+            try:
+                if not self.winfo_exists():
+                    return
+            except Exception:
+                return
+            func(*args, **kwargs)
+        return self.after(delay, wrapper)
+
+    def destroy(self) -> None:
+        self._alive = False
+        if self.bot_running:
+            self._stop_bot()
+            import time
+            time.sleep(0.5)
+        super().destroy()
 
     def _build(self) -> None:
         self.grid_columnconfigure(0, weight=1)
@@ -357,11 +385,15 @@ class DashboardFrame(ctk.CTkFrame):
         _CTkButtonSecondary(btn_logs_frame, text="Export Logs", command=self._export_logs, height=36, width=120).pack(side="left")
 
     def _log_callback(self, msg: str) -> None:
-        self.after(0, lambda: self._append_log(msg))
+        self._safe_after(0, self._append_log, msg)
 
     def _append_log(self, msg: str) -> None:
-        self.log_text.insert("end", msg + "\n")
-        self.log_text.see("end")
+        try:
+            if self.winfo_exists():
+                self.log_text.insert("end", msg + "\n")
+                self.log_text.see("end")
+        except Exception:
+            pass
 
     def _clear_logs(self) -> None:
         self.log_text.delete("1.0", "end")
@@ -382,8 +414,8 @@ class DashboardFrame(ctk.CTkFrame):
         self._poll_status()
 
     def _poll_status(self) -> None:
-        self.after(0, self._do_poll)
-        self.after(5000, self._poll_status)
+        self._safe_after(0, self._do_poll)
+        self._safe_after(5000, self._poll_status)
 
     def _do_poll(self) -> None:
         def check():
@@ -393,9 +425,9 @@ class DashboardFrame(ctk.CTkFrame):
                 health = loop.run_until_complete(self.client.health())
                 loop.close()
                 status_val = health.get("healthy", health.get("status", "unknown"))
-                self.after(0, lambda: self.server_label.configure(text=f"Server: {status_val}", text_color=COLORS["success"]))
+                self._safe_after(0, lambda: self.server_label.configure(text=f"Server: {status_val}", text_color=COLORS["success"]))
             except Exception:
-                self.after(0, lambda: self.server_label.configure(text="Server: Offline", text_color=COLORS["error"]))
+                self._safe_after(0, lambda: self.server_label.configure(text="Server: Offline", text_color=COLORS["error"]))
 
         threading.Thread(target=check, daemon=True).start()
 
@@ -500,14 +532,14 @@ class DashboardFrame(ctk.CTkFrame):
                 await app.initialize()
                 await app.start()
                 await app.updater.start_polling(drop_pending_updates=True)
-                self.after(0, lambda: self.bot_label.configure(text="Bot: Running", text_color=COLORS["success"]))
-                self.after(0, lambda: self._append_log("Bot polling started."))
+                self._safe_after(0, lambda: self.bot_label.configure(text="Bot: Running", text_color=COLORS["success"]))
+                self._safe_after(0, self._append_log, "Bot polling started.")
                 while not self._stop_event.is_set():
                     await asyncio.sleep(0.5)
             except Exception as exc:
                 err_msg = f"Bot error: {exc}"
-                self.after(0, lambda m=err_msg: self._append_log(m))
-                self.after(0, lambda: self.bot_label.configure(text="Bot: Error", text_color=COLORS["error"]))
+                self._safe_after(0, self._append_log, err_msg)
+                self._safe_after(0, lambda: self.bot_label.configure(text="Bot: Error", text_color=COLORS["error"]))
             finally:
                 try:
                     if app.updater.running:
@@ -521,10 +553,10 @@ class DashboardFrame(ctk.CTkFrame):
                 except Exception:
                     pass
                 scheduler.stop()
-                self.after(0, lambda: self.bot_label.configure(text="Bot: Stopped", text_color=COLORS["text_secondary"]))
-                self.after(0, lambda: self._append_log("Bot stopped."))
+                self._safe_after(0, lambda: self.bot_label.configure(text="Bot: Stopped", text_color=COLORS["text_secondary"]))
+                self._safe_after(0, self._append_log, "Bot stopped.")
                 self.bot_running = False
-                self.after(0, lambda: self.start_bot_btn.configure(text="Start Bot", fg_color=COLORS["accent"], text_color="#FFFFFF"))
+                self._safe_after(0, lambda: self.start_bot_btn.configure(text="Start Bot", fg_color=COLORS["accent"], text_color="#FFFFFF"))
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -532,8 +564,8 @@ class DashboardFrame(ctk.CTkFrame):
             loop.run_until_complete(run())
         except Exception as exc:
             err_msg = f"Bot loop error: {exc}"
-            self.after(0, lambda m=err_msg: self._append_log(m))
-            self.after(0, lambda: self.bot_label.configure(text="Bot: Error", text_color=COLORS["error"]))
+            self._safe_after(0, self._append_log, err_msg)
+            self._safe_after(0, lambda: self.bot_label.configure(text="Bot: Error", text_color=COLORS["error"]))
         finally:
             loop.close()
 
@@ -556,9 +588,10 @@ class DashboardFrame(ctk.CTkFrame):
                 asyncio.set_event_loop(loop)
                 providers = loop.run_until_complete(self.client.get_config_providers())
                 loop.close()
-                self.after(0, lambda p=providers: self._render_models(p))
+                self._safe_after(0, self._render_models, providers)
             except Exception as exc:
-                self.after(0, lambda e=str(exc): self._append_log(f"Failed to load models: {e}"))
+                err_msg = f"Failed to load models: {exc}"
+                self._safe_after(0, self._append_log, err_msg)
 
         threading.Thread(target=fetch, daemon=True).start()
 
