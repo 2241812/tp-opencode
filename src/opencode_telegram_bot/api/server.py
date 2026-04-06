@@ -35,7 +35,7 @@ class OpenCodeServer:
         self._process = subprocess.Popen(
             [self.command, "serve", "--port", str(port)],
             cwd=self.work_dir,
-            stdout=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
             stderr=subprocess.STDOUT,
             text=True,
         )

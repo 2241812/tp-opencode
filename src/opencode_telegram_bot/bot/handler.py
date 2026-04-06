@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import tempfile
@@ -15,11 +16,7 @@ from telegram import (
     Update,
 )
 from telegram.ext import (
-    CallbackQueryHandler,
-    CommandHandler,
     ContextTypes,
-    MessageHandler,
-    filters,
 )
 
 from opencode_telegram_bot.api import OpenCodeClient, OpenCodeServer
@@ -146,21 +143,15 @@ class BotHandler:
 
     async def _cache_metadata(self) -> None:
         if not self._cached_providers:
-            try:
+            with contextlib.suppress(Exception):
                 providers_data = await self.client.get_providers()
-                self._cached_providers = providers_data.get("all", [])
-            except Exception:
-                pass
+                self._cached_providers = providers_data.get("providers", [])
         if not self._cached_agents:
-            try:
+            with contextlib.suppress(Exception):
                 self._cached_agents = await self.client.get_agents()
-            except Exception:
-                pass
         if not self._cached_commands:
-            try:
+            with contextlib.suppress(Exception):
                 self._cached_commands = await self.client.get_commands()
-            except Exception:
-                pass
 
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_authorized(update.effective_user.id):
@@ -296,7 +287,6 @@ class BotHandler:
         current = self.bot_settings.get("agent_mode", "build")
         new_mode = "plan" if current == "build" else "build"
         self.bot_settings.set("agent_mode", new_mode)
-        key = "mode_plan" if new_mode == "plan" else "mode_build"
         await update.message.reply_text(t("mode_switched", locale=self._locale(), mode=new_mode.capitalize()))
 
     async def cmd_models(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -410,8 +400,11 @@ class BotHandler:
             parts = data.split(":", 2)
             provider = parts[1]
             model_id = parts[2]
-            model_str = f"{provider}/{model_id}" if model_id else provider
-            await self._send(context, chat_id, t("model_switched", locale=self._locale(), provider=provider, model=model_id or "default"))
+            await self._send(
+                context, chat_id,
+                t("model_switched", locale=self._locale(),
+                  provider=provider, model=model_id or "default"),
+            )
 
         elif data.startswith("runcmd:"):
             command = data.split(":", 1)[1]
@@ -498,7 +491,7 @@ class BotHandler:
             await self._send(context, chat_id, t("error", locale=self._locale(), message=str(e)))
             return
 
-        thinking_msg = await self._send(context, chat_id, t("thinking", locale=self._locale()))
+        await self._send(context, chat_id, t("thinking", locale=self._locale()))
 
         try:
             agent_mode = self.bot_settings.get("agent_mode", "build")
@@ -517,25 +510,34 @@ class BotHandler:
 
             if response_text:
                 if len(response_text) > 4000:
-                    with tempfile.NamedTemporaryFile(suffix=".txt", delete=False, mode="w", encoding="utf-8") as f:
+                    with tempfile.NamedTemporaryFile(
+                        suffix=".txt", delete=False, mode="w", encoding="utf-8",
+                    ) as f:
                         f.write(response_text)
                         f.flush()
-                    await context.bot.send_document(
-                        chat_id=chat_id,
-                        document=open(f.name, "rb"),
-                        filename="response.txt",
-                    )
-                    os.unlink(f.name)
+                        tmp_path = f.name
+                    with open(tmp_path, "rb") as doc:
+                        await context.bot.send_document(
+                            chat_id=chat_id,
+                            document=doc,
+                            filename="response.txt",
+                        )
+                    os.unlink(tmp_path)
                 else:
                     await self._send(context, chat_id, response_text)
 
                 if self.bot_settings.tts_enabled and self.tts.is_configured:
                     audio = await self.tts.synthesize(response_text[:4000])
                     if audio:
-                        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+                        with tempfile.NamedTemporaryFile(
+                            suffix=".mp3", delete=False,
+                        ) as f:
                             f.write(audio)
                             audio_path = f.name
-                        await context.bot.send_voice(chat_id=chat_id, voice=open(audio_path, "rb"))
+                        with open(audio_path, "rb") as voice_file:
+                            await context.bot.send_voice(
+                                chat_id=chat_id, voice=voice_file,
+                            )
                         os.unlink(audio_path)
             else:
                 raw = str(response)[:4000]

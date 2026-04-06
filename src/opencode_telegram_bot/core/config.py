@@ -5,7 +5,6 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)

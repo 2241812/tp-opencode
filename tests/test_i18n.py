@@ -1,4 +1,4 @@
-from opencode_telegram_bot.utils.i18n import t, get_available_locales
+from opencode_telegram_bot.utils.i18n import get_available_locales, t
 
 
 def test_english_locale():

@@ -1,25 +1,30 @@
 from __future__ import annotations
 
 import asyncio
-import json
+import contextlib
 import logging
-import os
 import shutil
 import sys
 import threading
-import traceback
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import customtkinter as ctk
 
 from opencode_telegram_bot.api import OpenCodeClient, OpenCodeServer
 from opencode_telegram_bot.core import BotSettings, SessionManager
-from opencode_telegram_bot.core.config import Settings, DEFAULT_CONFIG_DIR
-from opencode_telegram_bot.utils.scheduler import TaskScheduler
+from opencode_telegram_bot.core.config import DEFAULT_CONFIG_DIR, Settings
 from opencode_telegram_bot.utils.i18n import get_available_locales
-from opencode_telegram_bot.utils.logger import setup_logging, log_exception, get_log_contents, LOG_DIR, LOG_FILE
+from opencode_telegram_bot.utils.logger import (
+    LOG_DIR,
+    LOG_FILE,
+    get_log_contents,
+    log_exception,
+    setup_logging,
+)
+from opencode_telegram_bot.utils.scheduler import TaskScheduler
 
 logger = logging.getLogger(__name__)
 
@@ -171,10 +176,22 @@ class SetupFrame(ctk.CTkFrame):
         header.grid_propagate(False)
 
         _CTkLabelTitle(header, text="Setup").grid(row=0, column=0, padx=(40, 40), pady=(20, 2), sticky="w")
-        _CTkLabelSubtitle(header, text="Configure your OpenCode Telegram Bot").grid(row=1, column=0, padx=(40, 40), pady=(0, 6), sticky="w")
-        intro_text = ctk.CTkTextbox(header, height=48, corner_radius=0, border_width=0, fg_color=COLORS["bg"], text_color=COLORS["text_secondary"], font=ctk.CTkFont(size=13))
+        _CTkLabelSubtitle(
+            header, text="Configure your OpenCode Telegram Bot",
+        ).grid(row=1, column=0, padx=(40, 40), pady=(0, 6), sticky="w")
+        intro_text = ctk.CTkTextbox(
+            header, height=48, corner_radius=0, border_width=0,
+            fg_color=COLORS["bg"], text_color=COLORS["text_secondary"],
+            font=ctk.CTkFont(size=13),
+        )
         intro_text.grid(row=2, column=0, padx=(40, 40), pady=(0, 8), sticky="ew")
-        intro_text.insert("1.0", "Connect your Telegram bot to OpenCode AI. Get your bot token from @BotFather and user ID from @userinfobot. Then enter your OpenCode server details below to link them together.")
+        intro_text.insert(
+            "1.0",
+            "Connect your Telegram bot to OpenCode AI. "
+            "Get your bot token from @BotFather and user ID from "
+            "@userinfobot. Then enter your OpenCode server details "
+            "below to link them together.",
+        )
         intro_text.configure(state="disabled")
 
         content = ctk.CTkScrollableFrame(self, fg_color=COLORS["bg"])
@@ -185,40 +202,76 @@ class SetupFrame(ctk.CTkFrame):
         existing = _load_env_file(env_file)
 
         fields = [
-            ("bot_token", "Telegram Bot Token", existing.get("TELEGRAM_BOT_TOKEN", ""), "From @BotFather"),
-            ("user_id", "Telegram User ID", existing.get("TELEGRAM_ALLOWED_USER_ID", ""), "From @userinfobot"),
-            ("api_url", "OpenCode API URL", existing.get("OPENCODE_API_URL", "http://localhost:4096"), "Default: http://localhost:4096"),
-            ("password", "OpenCode Server Password", existing.get("OPENCODE_SERVER_PASSWORD", ""), "Leave empty if none"),
-            ("opencode_cmd", "OpenCode Command", existing.get("OPENCODE_COMMAND", _find_opencode()), "Path to opencode binary"),
+            ("bot_token", "Telegram Bot Token",
+             existing.get("TELEGRAM_BOT_TOKEN", ""), "From @BotFather"),
+            ("user_id", "Telegram User ID",
+             existing.get("TELEGRAM_ALLOWED_USER_ID", ""), "From @userinfobot"),
+            ("api_url", "OpenCode API URL",
+             existing.get("OPENCODE_API_URL", "http://localhost:4096"),
+             "Default: http://localhost:4096"),
+            ("password", "OpenCode Server Password",
+             existing.get("OPENCODE_SERVER_PASSWORD", ""),
+             "Leave empty if none"),
+            ("opencode_cmd", "OpenCode Command",
+             existing.get("OPENCODE_COMMAND", _find_opencode()),
+             "Path to opencode binary"),
         ]
 
         self.entries: dict[str, ctk.CTkEntry] = {}
         for i, (key, label, default, placeholder) in enumerate(fields):
             row = i * 2
-            _CTkLabel(content, text=label, anchor="w", font=ctk.CTkFont(size=14, weight="bold")).grid(row=row, column=0, padx=(0, 12), pady=(8, 2), sticky="w")
+            _CTkLabel(
+                content, text=label, anchor="w",
+                font=ctk.CTkFont(size=14, weight="bold"),
+            ).grid(row=row, column=0, padx=(0, 12), pady=(8, 2), sticky="w")
             entry = _CTkEntry(content, placeholder_text=placeholder)
             entry.insert(0, default)
             entry.grid(row=row, column=1, padx=(0, 0), pady=(8, 2), sticky="ew")
             self.entries[key] = entry
 
         row_locale = len(fields) * 2
-        _CTkLabel(content, text="Locale", anchor="w", font=ctk.CTkFont(size=14, weight="bold")).grid(row=row_locale, column=0, padx=(0, 12), pady=(16, 2), sticky="w")
+        _CTkLabel(
+            content, text="Locale", anchor="w",
+            font=ctk.CTkFont(size=14, weight="bold"),
+        ).grid(row=row_locale, column=0, padx=(0, 12), pady=(16, 2), sticky="w")
         locales = get_available_locales()
         current_locale = existing.get("BOT_LOCALE", "en")
-        self.locale_var = ctk.StringVar(value=current_locale if current_locale in locales else "en")
-        locale_menu = ctk.CTkOptionMenu(content, values=locales, variable=self.locale_var, height=44, corner_radius=12, fg_color=COLORS["bg_secondary"], button_color=COLORS["border"], button_hover_color=COLORS["accent"], text_color=COLORS["text_primary"], dropdown_fg_color=COLORS["bg"], dropdown_text_color=COLORS["text_primary"], dropdown_hover_color=COLORS["bg_secondary"], dropdown_font=ctk.CTkFont(size=14))
-        locale_menu.grid(row=row_locale, column=1, padx=(0, 0), pady=(16, 2), sticky="w")
+        self.locale_var = ctk.StringVar(
+            value=current_locale if current_locale in locales else "en",
+        )
+        locale_menu = ctk.CTkOptionMenu(
+            content, values=locales, variable=self.locale_var, height=44,
+            corner_radius=12, fg_color=COLORS["bg_secondary"],
+            button_color=COLORS["border"],
+            button_hover_color=COLORS["accent"],
+            text_color=COLORS["text_primary"],
+            dropdown_fg_color=COLORS["bg"],
+            dropdown_text_color=COLORS["text_primary"],
+            dropdown_hover_color=COLORS["bg_secondary"],
+            dropdown_font=ctk.CTkFont(size=14),
+        )
+        locale_menu.grid(
+            row=row_locale, column=1, padx=(0, 0), pady=(16, 2), sticky="w",
+        )
 
         row_auto = row_locale + 1
-        self.auto_start_var = ctk.BooleanVar(value=existing.get("OPENCODE_AUTO_START", "false").lower() == "true")
-        _CTkCheckBox(content, text="Auto-start OpenCode server when bot starts", variable=self.auto_start_var).grid(row=row_auto, column=0, columnspan=2, padx=0, pady=(16, 8), sticky="w")
+        self.auto_start_var = ctk.BooleanVar(
+            value=existing.get("OPENCODE_AUTO_START", "false").lower() == "true",
+        )
+        _CTkCheckBox(
+            content,
+            text="Auto-start OpenCode server when bot starts",
+            variable=self.auto_start_var,
+        ).grid(row=row_auto, column=0, columnspan=2, padx=0, pady=(16, 8), sticky="w")
 
         footer = ctk.CTkFrame(self, fg_color=COLORS["bg"], height=80)
         footer.grid(row=2, column=0, sticky="ew", padx=0, pady=0)
         footer.grid_columnconfigure(0, weight=1)
         footer.grid_propagate(False)
 
-        _CTkButton(footer, text="Save & Continue", command=self._save).grid(row=0, column=0, padx=(40, 40), pady=16, sticky="e")
+        _CTkButton(
+            footer, text="Save & Continue", command=self._save,
+        ).grid(row=0, column=0, padx=(40, 40), pady=16, sticky="e")
 
     def _save(self) -> None:
         DEFAULT_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -295,9 +348,9 @@ class DashboardFrame(ctk.CTkFrame):
         self._alive = False
         if self.bot_running:
             self._stop_bot()
-            import time
-            time.sleep(0.5)
-        super().destroy()
+            self.after(500, super().destroy)
+        else:
+            super().destroy()
 
     def _build(self) -> None:
         self.grid_columnconfigure(0, weight=1)
@@ -310,7 +363,9 @@ class DashboardFrame(ctk.CTkFrame):
         header.grid_propagate(False)
 
         _CTkLabelTitle(header, text="Dashboard").grid(row=0, column=0, padx=(40, 40), pady=(20, 2), sticky="w")
-        _CTkLabelSubtitle(header, text="Manage your OpenCode Telegram Bot").grid(row=1, column=0, padx=(40, 40), pady=(0, 10), sticky="w")
+        _CTkLabelSubtitle(
+            header, text="Manage your OpenCode Telegram Bot",
+        ).grid(row=1, column=0, padx=(40, 40), pady=(0, 10), sticky="w")
 
         status_bar = ctk.CTkFrame(self, fg_color=COLORS["bg_secondary"], corner_radius=16, height=56)
         status_bar.grid(row=1, column=0, columnspan=2, padx=40, pady=(0, 16), sticky="ew")
@@ -360,7 +415,10 @@ class DashboardFrame(ctk.CTkFrame):
         btn_frame = ctk.CTkFrame(ctrl_frame, fg_color=COLORS["bg"])
         btn_frame.grid(row=0, column=0, padx=0, pady=8, sticky="w")
 
-        self.start_server_btn = _CTkButtonSecondary(btn_frame, text="Start Server", command=self._toggle_server, width=140)
+        self.start_server_btn = _CTkButtonSecondary(
+            btn_frame, text="Start Server",
+            command=self._toggle_server, width=140,
+        )
         self.start_server_btn.pack(side="left", padx=(0, 10))
 
         self.start_bot_btn = _CTkButton(btn_frame, text="Start Bot", command=self._toggle_bot, width=140)
@@ -380,12 +438,29 @@ class DashboardFrame(ctk.CTkFrame):
         left_panel.grid_rowconfigure(1, weight=1)
         left_panel.grid_rowconfigure(3, weight=1)
 
-        _CTkLabel(left_panel, text="Sessions", font=ctk.CTkFont(size=18, weight="bold"), anchor="w").grid(row=0, column=0, pady=(0, 8), sticky="w")
-        self.sessions_text = ctk.CTkTextbox(left_panel, height=150, corner_radius=12, border_width=1, border_color=COLORS["border"], fg_color=COLORS["bg_secondary"], text_color=COLORS["text_primary"], font=ctk.CTkFont(size=13))
+        _CTkLabel(
+            left_panel, text="Sessions",
+            font=ctk.CTkFont(size=18, weight="bold"),
+            anchor="w",
+        ).grid(row=0, column=0, pady=(0, 8), sticky="w")
+        self.sessions_text = ctk.CTkTextbox(
+            left_panel, height=150, corner_radius=12,
+            border_width=1, border_color=COLORS["border"],
+            fg_color=COLORS["bg_secondary"],
+            text_color=COLORS["text_primary"],
+            font=ctk.CTkFont(size=13),
+        )
         self.sessions_text.grid(row=1, column=0, sticky="ew", pady=(0, 16))
 
-        _CTkLabel(left_panel, text="Available Models", font=ctk.CTkFont(size=18, weight="bold"), anchor="w").grid(row=2, column=0, pady=(0, 8), sticky="w")
-        self.models_frame = ctk.CTkScrollableFrame(left_panel, fg_color=COLORS["bg_secondary"], corner_radius=12, height=250)
+        _CTkLabel(
+            left_panel, text="Available Models",
+            font=ctk.CTkFont(size=18, weight="bold"),
+            anchor="w",
+        ).grid(row=2, column=0, pady=(0, 8), sticky="w")
+        self.models_frame = ctk.CTkScrollableFrame(
+            left_panel, fg_color=COLORS["bg_secondary"],
+            corner_radius=12, height=250,
+        )
         self.models_frame.grid(row=3, column=0, sticky="nsew")
 
         self._load_models()
@@ -395,14 +470,26 @@ class DashboardFrame(ctk.CTkFrame):
         right_panel.grid_columnconfigure(0, weight=1)
         right_panel.grid_rowconfigure(1, weight=1)
 
-        _CTkLabel(right_panel, text="Live Logs", font=ctk.CTkFont(size=18, weight="bold"), anchor="w").grid(row=0, column=0, pady=(0, 8), sticky="w")
+        _CTkLabel(
+            right_panel, text="Live Logs",
+            font=ctk.CTkFont(size=18, weight="bold"),
+            anchor="w",
+        ).grid(row=0, column=0, pady=(0, 8), sticky="w")
 
-        log_container = ctk.CTkFrame(right_panel, fg_color=COLORS["bg_secondary"], corner_radius=12)
+        log_container = ctk.CTkFrame(
+            right_panel, fg_color=COLORS["bg_secondary"],
+            corner_radius=12,
+        )
         log_container.grid(row=1, column=0, sticky="nsew")
         log_container.grid_columnconfigure(0, weight=1)
         log_container.grid_rowconfigure(0, weight=1)
 
-        self.log_text = ctk.CTkTextbox(log_container, wrap="word", corner_radius=12, border_width=0, fg_color=COLORS["bg_secondary"], text_color=COLORS["text_primary"], font=ctk.CTkFont(size=12, family="SF Mono"))
+        self.log_text = ctk.CTkTextbox(
+            log_container, wrap="word", corner_radius=12,
+            border_width=0, fg_color=COLORS["bg_secondary"],
+            text_color=COLORS["text_primary"],
+            font=ctk.CTkFont(size=12, family="SF Mono"),
+        )
         self.log_text.grid(row=0, column=0, padx=12, pady=12, sticky="nsew")
 
         self.log_text.insert("end", "Ready. Start the OpenCode server and bot.\n")
@@ -411,10 +498,18 @@ class DashboardFrame(ctk.CTkFrame):
         logging.getLogger("opencode_telegram_bot").addHandler(log_handler)
         logging.getLogger("telegram").addHandler(log_handler)
 
-        btn_logs_frame = ctk.CTkFrame(right_panel, fg_color=COLORS["bg"])
+        btn_logs_frame = ctk.CTkFrame(
+            right_panel, fg_color=COLORS["bg"],
+        )
         btn_logs_frame.grid(row=2, column=0, pady=(8, 0), sticky="e")
-        _CTkButtonSecondary(btn_logs_frame, text="Clear Logs", command=self._clear_logs, height=36, width=120).pack(side="left", padx=(0, 8))
-        _CTkButtonSecondary(btn_logs_frame, text="Export Logs", command=self._export_logs, height=36, width=120).pack(side="left")
+        _CTkButtonSecondary(
+            btn_logs_frame, text="Clear Logs",
+            command=self._clear_logs, height=36, width=120,
+        ).pack(side="left", padx=(0, 8))
+        _CTkButtonSecondary(
+            btn_logs_frame, text="Export Logs",
+            command=self._export_logs, height=36, width=120,
+        ).pack(side="left")
 
     def _log_callback(self, msg: str) -> None:
         self._safe_after(0, self._append_log, msg)
@@ -457,21 +552,39 @@ class DashboardFrame(ctk.CTkFrame):
                 health = loop.run_until_complete(self.client.health())
                 loop.close()
                 status_val = health.get("healthy", health.get("status", "unknown"))
-                self._safe_after(0, lambda: self.server_label.configure(text=f"Server: {status_val}", text_color=COLORS["success"]))
+                self._safe_after(
+                    0, lambda: self.server_label.configure(
+                        text=f"Server: {status_val}",
+                        text_color=COLORS["success"],
+                    ),
+                )
             except Exception:
-                self._safe_after(0, lambda: self.server_label.configure(text="Server: Offline", text_color=COLORS["error"]))
+                self._safe_after(
+                    0, lambda: self.server_label.configure(
+                        text="Server: Offline",
+                        text_color=COLORS["error"],
+                    ),
+                )
 
         threading.Thread(target=check, daemon=True).start()
 
     def _toggle_server(self) -> None:
         if self.server.is_running:
             self.server.stop()
-            self.start_server_btn.configure(text="Start Server", fg_color=COLORS["button_secondary"], text_color=COLORS["text_primary"])
+            self.start_server_btn.configure(
+                text="Start Server",
+                fg_color=COLORS["button_secondary"],
+                text_color=COLORS["text_primary"],
+            )
             self._append_log("OpenCode server stopped.")
         else:
             try:
                 self.server.start()
-                self.start_server_btn.configure(text="Stop Server", fg_color=COLORS["error"], text_color="#FFFFFF", border_color=COLORS["error"])
+                self.start_server_btn.configure(
+                    text="Stop Server", fg_color=COLORS["error"],
+                    text_color="#FFFFFF",
+                    border_color=COLORS["error"],
+                )
                 self._append_log("OpenCode server started.")
             except FileNotFoundError:
                 self._append_log("Error: 'opencode' command not found.")
@@ -503,7 +616,8 @@ class DashboardFrame(ctk.CTkFrame):
         from dotenv import load_dotenv
         load_dotenv(DEFAULT_CONFIG_DIR / ".env", override=True)
 
-        from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, filters
+        from telegram.ext import ApplicationBuilder, CallbackQueryHandler, CommandHandler, MessageHandler, filters
+
         from opencode_telegram_bot.bot.handler import BotHandler
 
         settings = Settings()
@@ -573,22 +687,28 @@ class DashboardFrame(ctk.CTkFrame):
                 self._safe_after(0, self._append_log, err_msg)
                 self._safe_after(0, lambda: self.bot_label.configure(text="Bot: Error", text_color=COLORS["error"]))
             finally:
-                try:
+                with contextlib.suppress(Exception):
                     if app.updater.running:
                         await app.updater.stop()
                     await app.stop()
                     await app.shutdown()
-                except Exception:
-                    pass
-                try:
+                with contextlib.suppress(Exception):
                     await handler.cleanup()
-                except Exception:
-                    pass
                 scheduler.stop()
-                self._safe_after(0, lambda: self.bot_label.configure(text="Bot: Stopped", text_color=COLORS["text_secondary"]))
+                self._safe_after(
+                    0, lambda: self.bot_label.configure(
+                        text="Bot: Stopped",
+                        text_color=COLORS["text_secondary"],
+                    ),
+                )
                 self._safe_after(0, self._append_log, "Bot stopped.")
                 self.bot_running = False
-                self._safe_after(0, lambda: self.start_bot_btn.configure(text="Start Bot", fg_color=COLORS["accent"], text_color="#FFFFFF"))
+                self._safe_after(
+                    0, lambda: self.start_bot_btn.configure(
+                        text="Start Bot", fg_color=COLORS["accent"],
+                        text_color="#FFFFFF",
+                    ),
+                )
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -609,9 +729,9 @@ class DashboardFrame(ctk.CTkFrame):
     def _reconfigure(self) -> None:
         if self.bot_running:
             self._stop_bot()
-            import time
-            time.sleep(1)
-        self.master._reload_settings_and_show_setup()
+            self.after(1000, self.master._reload_settings_and_show_setup)
+        else:
+            self.master._reload_settings_and_show_setup()
 
     def _load_models(self) -> None:
         def fetch():
@@ -648,7 +768,11 @@ class DashboardFrame(ctk.CTkFrame):
             models = p.get("models", [])
             if not isinstance(models, list):
                 models = []
-            _CTkLabel(self.models_frame, text=pid, font=ctk.CTkFont(weight="bold", size=13), text_color=COLORS["text_primary"]).pack(anchor="w", padx=12, pady=(12, 4))
+            _CTkLabel(
+                self.models_frame, text=pid,
+                font=ctk.CTkFont(weight="bold", size=13),
+                text_color=COLORS["text_primary"],
+            ).pack(anchor="w", padx=12, pady=(12, 4))
             for m in models:
                 mid = m.get("id", m.get("name", ""))
                 full = f"{pid}/{mid}"

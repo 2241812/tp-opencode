@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 from pathlib import Path
 from typing import Any
@@ -39,10 +40,8 @@ def t(key: str, locale: str = "en", **kwargs: Any) -> str:
     strings = _load_locale(locale)
     text = strings.get(key, key)
     if kwargs:
-        try:
+        with contextlib.suppress(KeyError, ValueError):
             text = text.format(**kwargs)
-        except (KeyError, ValueError):
-            pass
     return text
 
 

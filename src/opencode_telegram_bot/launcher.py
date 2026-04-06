@@ -10,7 +10,10 @@ from dotenv import load_dotenv
 
 from opencode_telegram_bot.api import OpenCodeServer
 from opencode_telegram_bot.core.config import DEFAULT_CONFIG_DIR
-from opencode_telegram_bot.utils.logger import setup_logging, log_exception
+from opencode_telegram_bot.utils.logger import (
+    log_exception,
+    setup_logging,
+)
 
 
 def _find_opencode() -> str:

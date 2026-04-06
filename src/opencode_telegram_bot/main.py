@@ -2,20 +2,22 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
 from prompt_toolkit import prompt
-from prompt_toolkit.completion import WordCompleter
 from rich.console import Console
 from rich.panel import Panel
 
-from opencode_telegram_bot.core.config import Settings, BotSettings, DEFAULT_CONFIG_DIR
+from opencode_telegram_bot.core.config import (
+    DEFAULT_CONFIG_DIR,
+    BotSettings,
+    Settings,
+)
 from opencode_telegram_bot.core.session import SessionManager
-from opencode_telegram_bot.utils.scheduler import TaskScheduler
 from opencode_telegram_bot.utils.i18n import get_available_locales
+from opencode_telegram_bot.utils.scheduler import TaskScheduler
 
 console = Console()
 
@@ -94,8 +96,8 @@ async def run_bot() -> None:
     session_manager = SessionManager()
     scheduler = TaskScheduler(max_tasks=settings.task_limit)
 
-    from opencode_telegram_bot.bot import BotHandler
     from opencode_telegram_bot.api import OpenCodeClient, OpenCodeServer
+    from opencode_telegram_bot.bot import BotHandler
 
     client = OpenCodeClient(
         base_url=settings.opencode_api_url,
@@ -112,22 +114,16 @@ async def run_bot() -> None:
         handler.server.start()
         await asyncio.sleep(3)
 
-    from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, filters
+    from telegram.ext import ApplicationBuilder, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
-    app = (
-        ApplicationBuilder()
-        .token(settings.telegram_bot_token)
-        .build()
-    )
-
+    builder = ApplicationBuilder().token(settings.telegram_bot_token)
     if settings.telegram_proxy_url:
-        app = (
-            ApplicationBuilder()
-            .token(settings.telegram_bot_token)
+        builder = (
+            builder
             .proxy_url(settings.telegram_proxy_url)
             .get_updates_proxy_url(settings.telegram_proxy_url)
-            .build()
         )
+    app = builder.build()
 
     app.add_handler(CommandHandler("start", handler.cmd_start))
     app.add_handler(CommandHandler("help", handler.cmd_help))

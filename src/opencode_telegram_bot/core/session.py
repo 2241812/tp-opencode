@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -30,17 +30,18 @@ class SessionManager:
         self._file.write_text(json.dumps(self._sessions, indent=2), encoding="utf-8")
 
     def add(self, session_id: str, metadata: dict[str, Any]) -> None:
+        now = datetime.now(timezone.utc).isoformat()
         self._sessions[session_id] = {
             **metadata,
-            "created_at": datetime.utcnow().isoformat(),
-            "updated_at": datetime.utcnow().isoformat(),
+            "created_at": now,
+            "updated_at": now,
         }
         self._save()
 
     def update(self, session_id: str, metadata: dict[str, Any]) -> None:
         if session_id in self._sessions:
             self._sessions[session_id].update(metadata)
-            self._sessions[session_id]["updated_at"] = datetime.utcnow().isoformat()
+            self._sessions[session_id]["updated_at"] = datetime.now(timezone.utc).isoformat()
             self._save()
 
     def remove(self, session_id: str) -> None:

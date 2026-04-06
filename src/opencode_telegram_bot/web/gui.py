@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from threading import Thread
 
-from flask import Flask, Response, jsonify, render_template_string
+from flask import Flask, jsonify, render_template_string
 
 logger = logging.getLogger(__name__)
 
@@ -16,16 +16,27 @@ HTML_TEMPLATE = """
     <title>OpenCode Telegram Bot — Monitor</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont,
+                         'Segoe UI', Roboto, sans-serif;
+            background: #0d1117; color: #c9d1d9; padding: 20px;
+        }
         .container { max-width: 900px; margin: 0 auto; }
         h1 { color: #58a6ff; margin-bottom: 20px; font-size: 1.5rem; }
         h2 { color: #8b949e; margin: 20px 0 10px; font-size: 1.1rem; }
-        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+        .card {
+            background: #161b22; border: 1px solid #30363d;
+            border-radius: 8px; padding: 16px; margin-bottom: 12px;
+        }
         .card h3 { color: #58a6ff; font-size: 0.95rem; margin-bottom: 8px; }
         .card p { color: #8b949e; font-size: 0.85rem; line-height: 1.5; }
         .status-ok { color: #3fb950; }
         .status-err { color: #f85149; }
-        .badge { display: inline-block; background: #21262d; border: 1px solid #30363d; border-radius: 12px; padding: 2px 10px; font-size: 0.75rem; margin: 2px; }
+        .badge {
+            display: inline-block; background: #21262d;
+            border: 1px solid #30363d; border-radius: 12px;
+            padding: 2px 10px; font-size: 0.75rem; margin: 2px;
+        }
         .refresh { color: #8b949e; font-size: 0.75rem; margin-top: 20px; }
         a { color: #58a6ff; }
     </style>
@@ -101,10 +112,15 @@ class WebGUI:
         @self.app.route("/")
         def index():
             if not self.bot_handler:
-                return render_template_string(HTML_TEMPLATE, server_ok=False, server_status="Not connected", api_url="", bot_running="No", locale="en", model_provider="", model_id="", sessions={}, tasks={})
+                return render_template_string(
+                    HTML_TEMPLATE, server_ok=False,
+                    server_status="Not connected", api_url="",
+                    bot_running="No", locale="en",
+                    model_provider="", model_id="",
+                    sessions={}, tasks={},
+                )
 
             settings = self.bot_handler.settings
-            bs = self.bot_handler.bot_settings
             sm = self.bot_handler.session_manager
             tasks = self.bot_handler.scheduler.list_tasks()
 

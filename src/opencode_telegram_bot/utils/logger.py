@@ -4,7 +4,6 @@ import logging
 import sys
 import traceback
 from datetime import datetime
-from pathlib import Path
 
 from opencode_telegram_bot.core.config import DEFAULT_CONFIG_DIR
 
